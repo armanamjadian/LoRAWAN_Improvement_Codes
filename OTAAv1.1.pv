@@ -1,0 +1,74 @@
+(*Variables*)
+type	key.
+free	c:channel.
+free	AppKey:key[private].
+free	NwkKey:key[private].
+free	AppSKey:key[private].
+table	NonceList(bitstring).
+const	JoinEUI:bitstring.
+const	DevEUI:bitstring.
+const	JoinReqType:bitstring.
+const	pad01,pad02,pad03,pad04,pad05,pad06,pad16:bitstring.
+
+(*Functions*)
+fun	enc(key,bitstring):bitstring.
+reduc	forall	k:key,m:bitstring;dec(k,enc(k,m))=m.
+fun	mac(key,bitstring):bitstring.
+fun	KEY(bitstring):key.
+
+(*Queries*)
+query	attacker(AppKey).
+query	attacker(NwkKey).
+query	attacker(AppSKey).
+event	AcceptDev.
+event	termServ.
+event	AcceptServ.
+event	termDev.
+query	inj-event(termDev)==>inj-event(AcceptServ).
+query	inj-event(termServ)==>inj-event(AcceptDev).
+
+let	Dev=
+	new	MHDR:bitstring;
+	new	DevNonce:bitstring;
+	let	MICd2s=mac(NwkKey,(MHDR,JoinEUI,DevEUI,DevNonce))	in
+	event	AcceptDev;
+	out(c,(MHDR,JoinEUI,DevEUI,DevNonce,MICd2s));
+	let	JSIntKey=KEY(enc(NwkKey,(pad06,DevEUI,pad16)))	in
+	let	JSEncKey=KEY(enc(NwkKey,(pad05,DevEUI,pad16)))	in
+	in(c,(SHDR:bitstring,ENC:bitstring));
+	let	(JoinNonce:bitstring,NetID:bitstring,DevAddr:bitstring,DLSetting:bitstring,RxDelay:bitstring,CFList:bitstring,MICs2d:bitstring)=dec(NwkKey,ENC)  in
+	if	MICs2d=mac(JSIntKey,(JoinReqType,JoinEUI,DevNonce,SHDR,JoinNonce,NetID,DevAddr,DLSetting,RxDelay,CFList))	then	event	termDev;
+	let	AppSKey=KEY(enc(AppKey,(pad02,JoinNonce,JoinEUI,DevNonce,pad16)))		in
+	let	FNwkSIntKey=KEY(enc(NwkKey,(pad01,JoinNonce,JoinEUI,DevNonce,pad16)))	in
+	let	SNwkSIntKey=KEY(enc(NwkKey,(pad03,JoinNonce,JoinEUI,DevNonce,pad16)))	in
+	let	NwkSEncKey=KEY(enc(NwkKey,(pad04,JoinNonce,JoinEUI,DevNonce,pad16)))	in
+	0.
+
+let	Serv=
+	in(c,(MHDR:bitstring,=JoinEUI,=DevEUI,x:bitstring,MIC2s:bitstring));
+	get	NonceList(x)	in	0	else(
+	if	MIC2s=mac(NwkKey,(MHDR,JoinEUI,DevEUI,x))	then
+	event	termServ;
+	insert	NonceList(x);
+	let	JSIntKey=KEY(enc(NwkKey,(pad06,DevEUI,pad16)))	in
+	let	JSEncKey=KEY(enc(NwkKey,(pad05,DevEUI,pad16)))	in
+	new	SHDR:bitstring;
+	new	JoinNonce:bitstring;
+	new	NetID:bitstring;
+	new	DevAddr:bitstring;
+	new	DLSetting:bitstring;
+	new	RxDelay:bitstring;
+	new	CFList:bitstring;
+	let	MIC2d=mac(JSIntKey,(JoinReqType,JoinEUI,x,SHDR,JoinNonce,NetID,DevAddr,DLSetting,RxDelay,CFList))	in					
+	let	ENC=enc(NwkKey,(JoinNonce,NetID,DevAddr,DLSetting,RxDelay,CFList,MIC2d))	in
+	event	AcceptServ;
+	out(c,(SHDR,ENC));
+	let	AppSKey=KEY(enc(AppKey,(pad02,JoinNonce,JoinEUI,x,pad16)))		in
+	let	FNwkSIntKey=KEY(enc(NwkKey,(pad01,JoinNonce,JoinEUI,x,pad16)))	in
+	let	SNwkSIntKey=KEY(enc(NwkKey,(pad03,JoinNonce,JoinEUI,x,pad16)))	in
+	let	NwkSEncKey=KEY(enc(NwkKey,(pad04,JoinNonce,JoinEUI,x,pad16)))	in
+	0).
+
+process
+	(*out(c,(NwkKey));*)(*Uncomment to check Forward Secrecy *)
+	!Dev|Serv(*|phase2;out(c,(NwkKey)) *)(*Uncomment to check Backward Secrecy *)

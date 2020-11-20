@@ -1,0 +1,86 @@
+(*	Variables*)
+free	c: channel.
+const	K_ser:bitstring [private].
+free	AppKey:bitstring [private].(**)
+free	r:bitstring [private].(**)
+const	ID_sn:bitstring [private].
+
+(*functions *)
+const	ZERO:bitstring.
+fun	xor(bitstring,bitstring):bitstring.(*XOR operation*)
+equation	forall m:bitstring,n:bitstring;xor(m,xor(m,n))=n.
+reduc 	forall m: bitstring,n: bitstring;Ixor(xor(m,n ),n) = m.
+equation 	forall x:bitstring; xor(x,x) = ZERO.
+equation 	forall x:bitstring; xor(ZERO,x) = x.
+equation 	forall x:bitstring; xor(x,ZERO) = x.
+fun 	h(bitstring):bitstring.(*hash function*)
+fun 	senc(bitstring , bitstring ) : bitstring.
+reduc 	forall m: bitstring,k: bitstring;sdec(senc(m,k ),k) = m.
+
+(*queries*)
+query 	attacker (K_ser).
+query 	attacker (ID_sn).
+query 	attacker (h((new n1,newn2, AppKey))).
+query 	attacker (h((h((new n1,newn2, AppKey)),newn1,new n2))).
+event 	SNAcServer().
+event 	SNEnd().
+event 	ServerAcSN().
+event 	ServerEnd().
+query 	inj-event(ServerEnd())==>inj-event(ServerAcSN()).
+query 	inj-event(SNEnd())==>inj-event(SNAcServer()).
+
+(*process of the SN *)
+let 	SN(DevEUI:bitstring,JoinEUI:bitstring,AppKey:bitstring) =
+	new 	MHDR:bitstring;
+	new 	n1:bitstring;
+	new 	t1:bitstring;
+	let 	TempH = h((DevEUI,JoinEUI)) 		in
+	let 	S1 = xor(TempH,n1)					in
+	let 	MIC = h((DevEUI,MHDR, JoinEUI,S1, t1, n1))	in
+	event 	SNAcServer();
+	out(c,(MHDR,JoinEUI,xor(h((DevEUI,JoinEUI)),n1), h((DevEUI,MHDR, JoinEUI,S1, t1, n1)),t1));
+	in(c, (SMHDR:bitstring, S2:bitstring, S3:bitstring, SMIC:bitstring, t2:bitstring));
+	let 	n2 = xor(S2, TempH) 		in
+	if 	SMIC= h((DevEUI, SMHDR,S2, S3, n1, n2, t2, AppKey)) 	then	event ServerEnd();
+	let Ks= h((n1, n2, AppKey))		in
+	let (nJoinEUI:bitstring, nDevEUI:bitstring, NetID:bitstring,DevAddr:bitstring,DLSetting:bitstring,RxDelay:bitstring,CFList:bitstring) = sdec(S3,Ks)	 in
+	let JoinEUI = nJoinEUIin
+	let DevEUI= nDevEUI in
+	let AppKey= h((Ks, n1, n2)).
+
+(*process of the Server *)
+let Server(JoinEUI:bitstring, ID_sn:bitstring, AppKey:bitstring, K_ser:bitstring) =
+	in(c, (MHDR:bitstring,JoinEUI:bitstring, S1:bitstring, MIC:bitstring,t1:bitstring));
+	let r = xor(JoinEUI,K_ser)				in
+	let DevEUI = xor(ID_sn, h((r,K_ser))) 	in
+	let TempH= h((DevEUI,JoinEUI)) 			in
+	let n1= xor(S1,TempH) 					in
+	if MIC = h((DevEUI,MHDR, JoinEUI,S1, t1, n1))	then	event SNEnd();
+	new n2:bitstring;
+	new t2:bitstring;
+	new nr:bitstring;
+	new SMHDR:bitstring;
+	new NetID:bitstring;
+	new DevAddr:bitstring;
+	new DLSetting:bitstring;
+	new RxDelay:bitstring;
+	new CFList:bitstring;
+	let r=nrin
+	let nJoinEUI= xor(r, K_ser)				in
+	let nDevEUI = xor(ID_sn,h((r,K_ser)))	in
+	let S2= xor(n2,TempH)					in
+	let Ks= h((n1,n2, AppKey))				in
+	let S3= senc((nJoinEUI,nDevEUI,NetID,DevAddr,DLSetting,RxDelay,CFList), Ks)		in
+	let SMIC= h((DevEUI,SMHDR,S2, S3, n1, n2, t2, AppKey))		in
+	event ServerAcSN();
+	out(c,(SMHDR, S2, S3, SMIC, t2));
+	let JoinEUI = nJoinEUI		in
+	let DevEUI= nDevEUI 		in
+	let AppKey= h((Ks,n1, n2)).
+
+process
+	let JoinEUI = xor(r, K_ser) 			in
+	let DevEUI = xor(ID_sn, h((r, K_ser)))	in
+	 (*out(c,(K_ser,AppKey))|*)(*Uncomment to check Forward Secrecy *)
+	!SN(xor(ID_sn, h((r, K_ser))), JoinEUI,AppKey) | !Server(JoinEUI,ID_sn,AppKey, K_ser)
+	(*|phase 3; out(c,(K_ser,AppKey))*)(*Uncomment to check Backward Secrecy *)

@@ -1,0 +1,72 @@
+(*	Variables*)
+type	key.
+free	c:	channel.
+free	AppKey:	key	[private].
+table	NonceList(bitstring).
+const AppEUI:bitstring.
+const DevEUI:bitstring.
+
+const pad01,pad02,pad16:bitstring.
+
+(*	Functions*)
+fun enc(key,bitstring):bitstring.
+reduc forall k:key,m:bitstring;dec(k,enc(k,m))=m.
+
+fun mac(key,bitstring):bitstring.
+
+(*	Queries*)
+
+query attacker(AppKey).
+event AcceptDev.
+event termServ.
+event AcceptServ.
+event termDev.
+
+query inj-event(termDev)==>inj-event(AcceptServ).
+query inj-event(termServ)==>inj-event(AcceptDev).
+
+let Dev=
+	new MHDR:bitstring;
+	new DevNonce:bitstring;
+	event AcceptDev;
+	
+	out(c,(MHDR,AppEUI,DevEUI,DevNonce,mac(AppKey,(MHDR,AppEUI,DevEUI,DevNonce))));
+	
+	in(c,(SHDR:bitstring,ENC:bitstring));
+	
+	let(AppNonce:bitstring,NetID:bitstring,DevAddr:bitstring,DLSetting:bitstring,RxDelay:bitstring,CFList:bitstring,MIC:bitstring)	=dec(AppKey,ENC)	in
+	
+	if MIC=mac(AppKey,(SHDR,AppNonce,NetID,DevAddr,DLSetting,RxDelay,CFList))	then	event termDev;
+	
+	let AppSKey=enc(AppKey,(pad02,AppNonce,NetID,DevNonce,pad16))	in
+	let NwkSKey=enc(AppKey,(pad01,AppNonce,NetID,DevNonce,pad16))	in
+	0.
+
+let Serv=
+
+	in(c,(MHDR:bitstring,=AppEUI,=DevEUI,x:bitstring,MIC1:bitstring));
+	
+	get NonceList(x) in 0 else(
+	if	MIC1=mac(AppKey,(MHDR,AppEUI,DevEUI,x))	then
+	insert	NonceList(x);
+	event	termServ;
+	new	AppNonce:bitstring;
+	new	SHDR:bitstring;
+	new	NetID:bitstring;
+	new	DevAddr:bitstring;
+	new	DLSetting:bitstring;
+	new	RxDelay:bitstring;
+	new	CFList:bitstring;
+	let	MIC2=mac(AppKey,(SHDR,AppNonce,NetID,DevAddr,DLSetting,RxDelay,CFList))	in
+	let	ENC=enc(AppKey,(AppNonce,NetID,DevAddr,DLSetting,RxDelay,CFList,MIC2))	in
+	event	AcceptServ;
+	
+	out(c,(SHDR,ENC));
+	
+	let	AppSKey=enc(AppKey,(pad02,AppNonce,NetID,x,pad16))	in
+	let	NwkSKey=enc(AppKey,(pad01,AppNonce,NetID,x,pad16))	in
+	0).
+
+process
+	(*out(c,AppKey);*)
+	!Dev|Serv(*|phase1;out(c,AppKey)*)
